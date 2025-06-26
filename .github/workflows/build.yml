@@ -1,9 +1,52 @@
-Package: com.yourname.ios18siriripple
-Name: iOS18SiriRipple
-Version: 1.0
-Architecture: iphoneos-arm
-Description: iOS 18 Siri Ripple Animation
-Maintainer: YourName
-Author: YourName
-Depends: mobilesubstrate (>= 0.9.5000)
-Section: Tweaks
+name: Build iOS18SiriRipple Deb
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Theos environment (Fixed)
+        run: |
+          # 设置路径变量
+          export THEOS=/opt/theos
+          
+          # 删除旧版安装（防止冲突）
+          sudo rm -rf $THEOS >/dev/null 2>&1 || true
+          
+          # 克隆最新版 Theos
+          sudo git clone --depth=1 https://github.com/theos/theos.git $THEOS
+          
+          # 关键修复：使用正确路径执行 bootstrap
+          sudo $THEOS/bin/update-theos
+          
+          # 导出环境变量
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
+          echo "PATH=$THEOS/bin:$PATH" >> $GITHUB_ENV
+      
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git clang curl libc++-dev libc++abi-dev libperl-dev
+          
+      - name: Prepare build structure
+        run: |
+          mkdir -p Tweak/Resources
+          mv *.m Tweak/Tweak.xm || echo "No source files moved"
+          [ -f .github/templates/Makefile ] && cp .github/templates/Makefile Tweak/
+          [ -f .github/templates/control ] && cp .github/templates/control Tweak/
+      
+      - name: Build ARM64 package
+        run: |
+          cd Tweak
+          make clean
+          make package ARCHS=arm64
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS18SiriRipple_Deb_Package
+          path: Tweak/packages/*.deb
