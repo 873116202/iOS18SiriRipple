@@ -1,49 +1,68 @@
 name: Build iOS18SiriRipple Deb
+
 on: [push]
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      # 安装必要依赖
-      - name: Install dependencies
-        run: |
-          brew install ldid xz dpkg git
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-
-      # 设置Theos环境 - 修复版本
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
       - name: Setup Theos environment
         run: |
-          export THEOS=~/theos  # 改为主目录避免权限问题
+          export THEOS=/opt/theos
+          sudo rm -rf $THEOS >/dev/null 2>&1 || true
+          sudo git clone --depth=1 https://github.com/theos/theos.git $THEOS
           
-          # 删除旧安装(无sudo)
-          rm -rf $THEOS >/dev/null 2>&1 || true
+          # 关键修复1: 使用正确的初始化命令
+          sudo $THEOS/bin/update-theos
           
-          # 克隆Theos(无sudo)
-          git clone --depth=1 https://github.com/theos/theos.git $THEOS
-          
-          # 修复关键路径(无sudo)
-          $THEOS/bin/update-theos
-          
-          # 安装iOS SDK (解决常见编译错误)
-          mkdir -p $THEOS/sdks
-          curl -LO https://github.com/theos/sdks/archive/master.zip
-          unzip master.zip -d $THEOS/sdks/
-          mv $THEOS/sdks/sdks-master/iPhoneOS*.sdk $THEOS/sdks/
-          
-          # 永久设置环境变量
+          # 导出环境变量
           echo "THEOS=$THEOS" >> $GITHUB_ENV
-          echo "PATH=$THEOS/bin:$PATH" >> $GITHUB_ENV
-          echo "THEOS_SDK_DIR=$THEOS/sdks" >> $GITHUB_ENV
-
-      # 编译和打包
-      - name: Build and package
+          echo "THEOS_MAKE_PATH=/opt/theos/makefiles" >> $GITHUB_ENV
+      
+      - name: Install build dependencies
         run: |
-          # 进入项目目录
-          cd iOS18SiriRipple
+          sudo apt-get update
+          sudo apt-get install -y build-essential git clang curl libc++-dev libc++abi-dev libperl-dev xz-utils
           
-          # 清理并构建包
+          # 关键修复2: 解决ld链接问题
+          sudo ln -sf /usr/bin/ld.lld /usr/bin/ld || true
+      
+      - name: Prepare build structure
+        run: |
+          # 创建必需的目录
+          mkdir -p Tweak
+          
+          # 处理源文件
+          if [ -f "iOS18SiriRipple.xm" ]; then
+            mv iOS18SiriRipple.xm Tweak/Tweak.xm
+          else
+            mv *.m Tweak/Tweak.xm
+          fi
+          
+          # 关键修复3: 确保使用正确的Makefile
+          [ -f .github/templates/Makefile ] && cp .github/templates/Makefile Tweak/Makefile
+          [ -f .github/templates/control ] && cp .github/templates/control Tweak/control
+          [ -d Resources ] && mv Resources Tweak/Resources
+          
+          echo "项目结构:"
+          tree -L 2
+      
+      - name: Build ARM64 package
+        # 关键修复4: 切换到Tweak目录构建
+        working-directory: ./Tweak
+        run: |
+          echo "当前目录: $(pwd)"
+          echo "文件列表:"
+          ls -la
+          
           make clean
-          make package
+          make package ARCHS=arm64
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS18SiriRipple_Deb_Package
+          path: Tweak/packages/*.deb
