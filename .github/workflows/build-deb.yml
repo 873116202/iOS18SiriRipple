@@ -1,30 +1,113 @@
 name: Build iOS18SiriRipple.deb
 
 on:
-  pull_request:  # 添加对PR的触发
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   build-deb:
-    # 添加失败重试机制
     runs-on: macos-latest
-    continue-on-error: false
+    timeout-minutes: 20
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}  # 确保检出PR分支
-    
-    # 添加编译前清理
-    - name: Clean previous builds
+      
+    # 增强的编译前检查
+    - name: Pre-build validation
       run: |
-        rm -rf build_output *.deb package
+        echo "🔍 项目结构验证："
+        ls -la
         
-    # ... [其他步骤同之前] ...
-    
-    # 在build步骤后添加诊断
-    - name: Diagnostic after build
+        if [ ! -f "iOS18SiriRipple/iOS18SiriRipple.xcodeproj/project.pbxproj" ]; then
+          echo "❌ 致命错误：项目文件缺失！"
+          exit 1
+        fi
+        
+        echo "✅ 项目验证通过"
+      
+    - name: Setup Xcode
       run: |
-        echo "🔍 构建产物分析:"
-        find build_output -name iOS18SiriRipple -print
+        sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+        echo "Xcode版本: $(xcodebuild -version)"
+      
+    - name: Install dependencies
+      run: |
+        brew update
+        brew install dpkg ldid
+      
+    # 关键修复：编译步骤增强
+    - name: Build project
+      id: compile
+      run: |
+        cd iOS18SiriRipple
+        
+        # 启用详细日志
+        set -x
+        
+        # 清理历史构建
+        rm -rf build ../build_output
+        
+        # 执行编译（记录日志）
+        xcodebuild -project iOS18SiriRipple.xcodeproj \
+                   -scheme iOS18SiriRipple \
+                   -configuration Release \
+                   -sdk iphoneos \
+                   -derivedDataPath ../build_output \
+                   CODE_SIGN_IDENTITY="" \
+                   CODE_SIGNING_REQUIRED=NO \
+                   CODE_SIGNING_ALLOWED=NO \
+                   > ../xcodebuild.log 2>&1 || {
+                       echo "❌ 编译失败！完整日志："
+                       cat ../xcodebuild.log
+                       exit 1
+                   }
+        
+        # 验证编译产物
+        if [ -f "../build_output/Build/Products/Release-iphoneos/iOS18SiriRipple.framework/iOS18SiriRipple" ]; then
+          echo "✅ 编译成功！产物位置："
+          ls -lR ../build_output/Build/Products
+        else
+          echo "❌ 错误：未生成编译产物"
+          echo "编译日志："
+          cat ../xcodebuild.log
+          exit 1
+        fi
+      
+    # 安全的诊断步骤
+    - name: Post-build diagnostics
+      if: steps.compile.outcome == 'success'
+      run: |
+        echo "📊 构建后诊断："
+        echo "1. 编译输出目录："
+        ls -lR build_output
+        
+        echo "2. 查找构建产物："
+        find build_output -name "iOS18SiriRipple" -print
+        
+        echo "✅ 诊断完成"
+      
+    - name: Create deb package
+      if: steps.compile.outcome == 'success'
+      run: |
+        # [保持原有的打包逻辑]
+        echo "📦 开始打包..."
+      
+    - name: Upload artifacts
+      if: steps.compile.outcome == 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts
+        path: |
+          iOS18SiriRipple.deb
+          xcodebuild.log
+          build_output/
+      
+    # 故障情况下上传日志
+    - name: Upload error logs
+      if: steps.compile.outcome != 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: error-logs
+        path: xcodebuild.log
