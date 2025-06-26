@@ -11,102 +11,137 @@ jobs:
     timeout-minutes: 15
     
     steps:
+    # 1. 检出代码到根目录
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Setup Xcode
+    # 2. 确认根目录下的项目结构
+    - name: Verify root directory structure
       run: |
-        sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-        echo "Xcode版本: $(xcodebuild -version)"
-        echo "工作目录: $(pwd)"
-        echo "文件夹内容:"
+        echo "📂 根目录内容:"
         ls -la
-      
-    - name: Verify project exists
-      id: check_project
-      run: |
+        echo ""
+        
         if [ ! -d "iOS18SiriRipple.xcodeproj" ]; then
-          echo "❌ 错误：未找到 iOS18SiriRipple.xcodeproj"
+          echo "❌ 错误：在根目录未找到 iOS18SiriRipple.xcodeproj"
+          echo "请确保项目文件位于仓库根目录"
           exit 1
         else
-          echo "✅ 找到项目文件"
+          echo "✅ 在根目录找到 iOS18SiriRipple.xcodeproj"
         fi
         
-    - name: Build project
+        if [ ! -d "iOS18SiriRipple" ]; then
+          echo "⚠️ 注意：未找到 iOS18SiriRipple 源码目录"
+        else
+          echo "✅ 在根目录找到 iOS18SiriRipple 源码目录"
+        fi
+      
+    # 3. 设置开发环境  
+    - name: Setup Xcode environment
       run: |
-        # 添加详细日志
-        set -x  # 启用详细命令回显
-        
-        # 清理历史编译文件
-        rm -rf build
-        
-        # 使用绝对路径确保位置正确
+        sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+        xcodebuild -version
+        echo "工作目录: $(pwd)"
+      
+    # 4. 安装必要工具
+    - name: Install build tools
+      run: |
+        brew update
+        brew install dpkg
+        brew install ldid
+      
+    # 5. 编译项目
+    - name: Build project (from root)
+      run: |
+        # 确保在根目录工作
+        echo "🛠️ 开始构建项目..."
         xcodebuild -project iOS18SiriRipple.xcodeproj \
                    -scheme iOS18SiriRipple \
                    -configuration Release \
                    -sdk iphoneos \
-                   -derivedDataPath $PWD/build \
+                   -derivedDataPath build_output \
                    CODE_SIGN_IDENTITY="" \
                    CODE_SIGNING_REQUIRED=NO \
-                   CODE_SIGNING_ALLOWED=NO \
-                   | tee xcodebuild.log  # 保存详细日志
+                   CODE_SIGNING_ALLOWED=NO
         
-        # 验证编译产物存在
-        if [ ! -d "build/Build/Products/Release-iphoneos" ]; then
-          echo "❌ 编译失败，未生成产物目录"
-          echo "=== Xcode编译日志 ==="
-          cat xcodebuild.log
-          exit 1
-        fi
-        
+        echo "✅ 项目编译完成"
+      
+    # 6. 创建DEB包
     - name: Create deb package
       run: |
-        # 设置严格错误检查
-        set -euo pipefail
+        # 设置编译产物路径
+        BINARY_PATH="build_output/Build/Products/Release-iphoneos/iOS18SiriRipple.framework/iOS18SiriRipple"
         
-        # 显式定义编译产物路径
-        BUILD_PATH="build/Build/Products/Release-iphoneos"
-        BINARY="$BUILD_PATH/iOS18SiriRipple.framework/iOS18SiriRipple"
-        
-        echo "📦 编译产物路径: $BINARY"
-        
-        # 验证文件存在
-        if [ ! -f "$BINARY" ]; then
-          echo "❌ 错误：找不到编译产物：$BINARY"
-          echo "目录内容："
-          ls -lR "$BUILD_PATH"
+        # 验证编译产物存在
+        if [ ! -f "$BINARY_PATH" ]; then
+          echo "❌ 错误：未找到编译产物: $BINARY_PATH"
+          echo "编译输出目录内容:"
+          ls -lR build_output
           exit 1
         fi
         
-        # 创建包结构
+        # 创建DEB包结构
         mkdir -p package/Library/MobileSubstrate/DynamicLibraries
         mkdir -p package/DEBIAN
         
-        # 复制文件（使用绝对路径）
-        cp "$BINARY" package/Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.dylib
+        # 复制编译产物
+        cp "$BINARY_PATH" package/Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.dylib
         echo "✅ 已复制二进制文件"
         
-        # 后续打包代码保持不变...
-        # [保持原打包逻辑，但此处省略重复代码]
+        # 创建plist配置文件
+        cat > package/Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.plist <<EOF
+        { 
+            Filter = { 
+                Bundles = ( "com.apple.springboard" ); 
+            }; 
+        }
+        EOF
+        echo "✅ 已创建plist文件"
         
-        # 添加成功标记
-        echo "🎉 DEB 包创建成功！"
+        # 创建control控制文件
+        cat > package/DEBIAN/control <<EOF
+        Package: com.behuge.ios18siriripple
+        Name: iOS18SiriRipple
+        Version: 1.0.0
+        Architecture: iphoneos-arm
+        Description: iOS 18 style Siri ripple animation
+        Maintainer: 873116202
+        Author: 873116202
+        Section: Tweaks
+        Depends: mobilesubstrate
+        EOF
+        echo "✅ 已创建control文件"
         
-    - name: Upload artifact
+        # 创建安装后脚本
+        cat > package/DEBIAN/postinst <<EOF
+        #!/bin/sh
+        # 设置文件权限
+        chmod 0755 /Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.dylib
+        chmod 0644 /Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.plist
+        
+        # 提示重启SpringBoard而非整个系统
+        launchctl stop com.apple.SpringBoard
+        launchctl start com.apple.SpringBoard
+        
+        echo "✅ iOS18SiriRipple已成功安装！请解锁设备查看效果"
+        EOF
+        chmod 0755 package/DEBIAN/postinst
+        echo "✅ 已创建postinst脚本"
+        
+        # 打包为DEB文件
+        dpkg-deb -b package iOS18SiriRipple.deb
+        echo "🎉 DEB包创建成功：iOS18SiriRipple.deb"
+      
+    # 7. 上传制品
+    - name: Upload DEB artifact
       uses: actions/upload-artifact@v4
       with:
         name: iOS18SiriRipple.deb
         path: iOS18SiriRipple.deb
       
-    # 后续步骤保持不变...
-
-        
+    # 8. 创建发布（可选）
     - name: Create GitHub Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: |
-          *.deb
-          build/*.dylib
-        tag_name: ${{ github.ref }}
-        body: "iOS18SiriRipple deb package"
+        files: iOS18SiriRipple.deb
