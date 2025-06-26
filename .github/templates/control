@@ -1,9 +1,0 @@
-Package: com.yourname.ios18siriripple
-Name: iOS18SiriRipple
-Version: 1.0
-Architecture: iphoneos-arm
-Description: iOS 18 Siri Ripple Animation
-Maintainer: YourName
-Author: YourName
-Depends: mobilesubstrate (>= 0.9.5000)
-Section: Tweaks
