@@ -14,10 +14,11 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Set up Xcode
+    - name: Setup Xcode
       run: |
         sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
         xcodebuild -version
+        echo "🎯 WORKSPACE PATH: $GITHUB_WORKSPACE"
         
     - name: Install dependencies
       run: |
@@ -25,35 +26,61 @@ jobs:
         brew install dpkg
         brew install ldid
         
-    - name: Build project
+    - name: Find and build Xcode project
       run: |
-        cd ${GITHUB_WORKSPACE}
-        xcodebuild -scheme iOS18SiriRipple -configuration Release -sdk iphoneos \
-          CODE_SIGN_IDENTITY="" \
-          CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGNING_ALLOWED=NO
+        PROJECT_DIR=$(find . -name '*.xcodeproj' -print -quit)
+        
+        if [ -z "$PROJECT_DIR" ]; then
+          echo "❌ ERROR: No Xcode project found!"
+          exit 1
+        fi
+        
+        echo "🔍 Found project at: $PROJECT_DIR"
+        
+        # Extract project name without extension
+        PROJECT_NAME=$(basename "$PROJECT_DIR" .xcodeproj)
+        
+        xcodebuild -project "$PROJECT_DIR" \
+                   -scheme "$PROJECT_NAME" \
+                   -configuration Release \
+                   -sdk iphoneos \
+                   CODE_SIGN_IDENTITY="" \
+                   CODE_SIGNING_REQUIRED=NO \
+                   CODE_SIGNING_ALLOWED=NO
         
     - name: Create deb package
       run: |
+        # 动态获取项目名称
+        PROJECT_DIR=$(find . -name '*.xcodeproj' -print -quit)
+        PROJECT_NAME=$(basename "$PROJECT_DIR" .xcodeproj)
+        
         # 创建包结构
         mkdir -p package/Library/MobileSubstrate/DynamicLibraries
         mkdir -p package/DEBIAN
         
-        # 复制编译产物
-        cp build/Release-iphoneos/iOS18SiriRipple.framework/iOS18SiriRipple package/Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.dylib
+        # 查找构建产物
+        BINARY_PATH=$(find build -name "$PROJECT_NAME" -type f -print -quit)
         
-        # 签名 (可选)
-        ldid -S package/Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.dylib
+        if [ -z "$BINARY_PATH" ]; then
+          echo "❌ ERROR: No compiled binary found!"
+          exit 1
+        fi
+        
+        echo "📦 Found binary at: $BINARY_PATH"
+        cp "$BINARY_PATH" package/Library/MobileSubstrate/DynamicLibraries/${PROJECT_NAME}.dylib
+        
+        # 签名
+        ldid -S package/Library/MobileSubstrate/DynamicLibraries/${PROJECT_NAME}.dylib
         
         # 创建plist文件
-        cat > package/Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.plist <<EOF
+        cat > package/Library/MobileSubstrate/DynamicLibraries/${PROJECT_NAME}.plist <<EOF
         { Filter = { Bundles = ( "com.apple.springboard" ); }; }
         EOF
         
         # 创建control文件
         cat > package/DEBIAN/control <<EOF
-        Package: com.behuge.ios18siriripple
-        Name: iOS18SiriRipple
+        Package: com.behuge.${PROJECT_NAME}
+        Name: ${PROJECT_NAME}
         Version: 1.0.0
         Architecture: iphoneos-arm
         Description: iOS 18 style Siri ripple animation
@@ -66,27 +93,30 @@ jobs:
         # 创建postinst脚本
         cat > package/DEBIAN/postinst <<EOF
         #!/bin/sh
-        chmod 0755 /Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.dylib
-        chmod 0644 /Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.plist
+        chmod 0755 /Library/MobileSubstrate/DynamicLibraries/${PROJECT_NAME}.dylib
+        chmod 0644 /Library/MobileSubstrate/DynamicLibraries/${PROJECT_NAME}.plist
         /sbin/reboot
         EOF
         chmod 0755 package/DEBIAN/postinst
         
         # 构建deb包
-        dpkg-deb -b package iOS18SiriRipple.deb
+        dpkg-deb -b package ${PROJECT_NAME}.deb
+        echo "✅ DEB created: ${PROJECT_NAME}.deb"
         
-    # 修复：使用 v4 而不是弃用的 v3
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: iOS18SiriRipple.deb
-        path: iOS18SiriRipple.deb
+        path: |
+          *.deb
+          build/
         
-    # 添加发布步骤
     - name: Create GitHub Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: iOS18SiriRipple.deb
+        files: |
+          *.deb
+          build/*.dylib
         tag_name: ${{ github.ref }}
         body: "iOS18SiriRipple deb package"
