@@ -31,13 +31,8 @@ jobs:
     - name: Install build tools
       run: |
         brew update
-        # 跳过已安装的wget
-        if ! brew list wget &>/dev/null; then
-          brew install wget
-        else
-          echo "wget已安装，跳过安装"
-        fi
-        brew install dpkg ldid zip
+        # 安装必要工具
+        brew install dpkg ldid
       
     # 4. 设置开发环境
     - name: Setup environment
@@ -59,36 +54,7 @@ jobs:
         # 确保日志目录存在
         mkdir -p logs
       
-    # 5. 修复项目配置
-    - name: Fix project configuration
-      run: |
-        cd iOS18SiriRipple
-        
-        # 备份原始项目文件
-        cp iOS18SiriRipple.xcodeproj/project.pbxproj project.pbxproj.bak
-        
-        # 确保Metal文件包含在构建中
-        if ! grep -q "Shader.metal" iOS18SiriRipple.xcodeproj/project.pbxproj; then
-          echo "添加Metal文件到编译源..."
-          /usr/libexec/PlistBuddy -c "Add :objects:8F6D2D352A3F4A9C001A7C1F:files:0 string Shader.metal" iOS18SiriRipple.xcodeproj/project.pbxproj
-        fi
-        
-        # 确保架构设置为arm64
-        if ! grep -q "ARCHS = arm64" iOS18SiriRipple.xcodeproj/project.pbxproj; then
-          echo "设置ARCHS为arm64..."
-          /usr/libexec/PlistBuddy -c "Set :objects:8F6D2D352A3F4A9C001A7C1F:buildSettings:ARCHS arm64" iOS18SiriRipple.xcodeproj/project.pbxproj
-          /usr/libexec/PlistBuddy -c "Set :objects:8F6D2D352A3F4A9C001A7C1F:buildSettings:VALID_ARCHS arm64" iOS18SiriRipple.xcodeproj/project.pbxproj
-        fi
-        
-        # 确保SDK设置为iphoneos
-        if ! grep -q "SDKROOT = iphoneos" iOS18SiriRipple.xcodeproj/project.pbxproj; then
-          echo "设置SDK为iphoneos..."
-          /usr/libexec/PlistBuddy -c "Set :objects:8F6D2D352A3F4A9C001A7C1F:buildSettings:SDKROOT iphoneos" iOS18SiriRipple.xcodeproj/project.pbxproj
-        fi
-        
-        echo "✅ 项目配置修复完成"
-      
-    # 6. 编译项目（确保生成日志）
+    # 5. 编译项目（使用参数覆盖设置）
     - name: Build project
       run: |
         # 清理缓存
@@ -96,15 +62,7 @@ jobs:
         
         cd iOS18SiriRipple
         
-        # 设置日志文件路径
-        LOG_DIR="${GITHUB_WORKSPACE}/logs"
-        BUILD_LOG="${LOG_DIR}/xcodebuild.log"
-        LS_LOG="${LOG_DIR}/ls_output.log"
-        
-        # 确保日志目录存在
-        mkdir -p "${LOG_DIR}"
-        
-        # 编译命令（添加详细日志）
+        # 编译命令 - 使用参数覆盖设置
         set -x  # 开启详细日志
         xcodebuild clean build \
           -project iOS18SiriRipple.xcodeproj \
@@ -113,19 +71,22 @@ jobs:
           -sdk iphoneos \
           ARCHS=arm64 \
           VALID_ARCHS=arm64 \
+          SDKROOT=iphoneos \
           CODE_SIGN_IDENTITY="" \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGNING_ALLOWED=NO \
           -derivedDataPath ../build_output \
-          | tee "${BUILD_LOG}"
+          | tee ../xcodebuild.log
         set +x  # 关闭详细日志
         
         # 验证编译产物
         BINARY_PATH="../build_output/Build/Products/Release-iphoneos/iOS18SiriRipple.framework/iOS18SiriRipple"
         if [ ! -f "$BINARY_PATH" ]; then
           echo "::error::❌ 编译产物不存在"
-          # 记录目录结构到日志
-          ls -lR ../build_output > "${LS_LOG}"
+          echo "构建日志:"
+          cat ../xcodebuild.log
+          echo "构建目录内容:"
+          ls -lR ../build_output
           exit 1
         else
           echo "✅ 编译成功！产物路径: $BINARY_PATH"
@@ -136,7 +97,7 @@ jobs:
         ldid -S "$BINARY_PATH"
         echo "✅ 二进制文件已签名"
       
-    # 7. 创建DEB包
+    # 6. 创建DEB包
     - name: Create deb package
       run: |
         # 确保在正确的工作目录
@@ -196,15 +157,14 @@ jobs:
         dpkg-deb -b package iOS18SiriRipple.deb
         echo "🎉 DEB包创建成功: iOS18SiriRipple.deb"
       
-    # 8. 上传制品
+    # 7. 上传制品
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: build-artifacts
-        path: |
-          ${GITHUB_WORKSPACE}/iOS18SiriRipple.deb
+        path: iOS18SiriRipple.deb
       
-    # 9. 确保日志收集（无论成功或失败）
+    # 8. 确保日志收集（无论成功或失败）
     - name: Collect and upload logs
       if: always()  # 无论成功或失败都执行
       run: |
@@ -212,12 +172,12 @@ jobs:
         mkdir -p logs
         
         # 收集所有可能相关的日志
-        if [ -f "${GITHUB_WORKSPACE}/xcodebuild.log" ]; then
-          cp "${GITHUB_WORKSPACE}/xcodebuild.log" logs/
+        if [ -f "xcodebuild.log" ]; then
+          cp xcodebuild.log logs/
         fi
         
-        if [ -d "${GITHUB_WORKSPACE}/build_output" ]; then
-          ls -lR "${GITHUB_WORKSPACE}/build_output" > logs/build_directory.txt
+        if [ -d "build_output" ]; then
+          ls -lR build_output > logs/build_directory.txt
         fi
         
         # 创建日志包
@@ -225,12 +185,4 @@ jobs:
         zip -r "error-logs-$timestamp.zip" logs/
         echo "✅ 日志包已创建: error-logs-$timestamp.zip"
       
-    # 10. 上传错误日志（确保在任何情况下都能上传）
-    - name: Upload error logs
-      if: always()  # 无论成功或失败都执行
-      uses: actions/upload-artifact@v4
-      with:
-        name: error-logs
-        path: |
-          ${GITHUB_WORKSPACE}/error-logs-*.zip
-        retention-days: 7
+    # 9. 上传错误日志（确保在任何情况下都能上传
