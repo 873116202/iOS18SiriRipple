@@ -12,52 +12,77 @@ jobs:
       - name: Setup Theos environment
         run: |
           export THEOS=/opt/theos
-          sudo rm -rf $THEOS >/dev/null 2>&1 || true
+          sudo rm -rf $THEOS || true
           sudo git clone --depth=1 https://github.com/theos/theos.git $THEOS
-          
-          # 关键修复1: 使用正确的初始化命令
           sudo $THEOS/bin/update-theos
           
-          # 导出环境变量
+          # 添加iOS SDK (关键修复)
+          sudo mkdir -p $THEOS/sdks
+          SDK_URL="https://github.com/xybp888/iOS-SDKs/releases/download/14.4/iPhoneOS14.4.sdk.tar.xz"
+          curl -L $SDK_URL | sudo tar -C $THEOS/sdks -xJ
+          
+          # 全局环境变量设置
+          echo "THEOS=$THEOS" | sudo tee -a /etc/environment
+          echo "THEOS_MAKE_PATH=$THEOS/makefiles" | sudo tee -a /etc/environment
+          
+          # 工作流环境变量
           echo "THEOS=$THEOS" >> $GITHUB_ENV
-          echo "THEOS_MAKE_PATH=/opt/theos/makefiles" >> $GITHUB_ENV
+          echo "THEOS_MAKE_PATH=$THEOS/makefiles" >> $GITHUB_ENV
       
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git clang curl libc++-dev libc++abi-dev libperl-dev xz-utils
-          
-          # 关键修复2: 解决ld链接问题
-          sudo ln -sf /usr/bin/ld.lld /usr/bin/ld || true
+          sudo ln -sf /usr/bin/ld.lld /usr/bin/ld
       
       - name: Prepare build structure
         run: |
-          # 创建必需的目录
           mkdir -p Tweak
           
-          # 处理源文件
+          # 动态选择源文件
           if [ -f "iOS18SiriRipple.xm" ]; then
             mv iOS18SiriRipple.xm Tweak/Tweak.xm
+          elif [ -f "iOS18SiriRipple.m" ]; then
+            mv iOS18SiriRipple.m Tweak/Tweak.xm
+          elif [ -n "$(find . -maxdepth 1 -name '*.xm' -print -quit)" ]; then
+            mv *.xm Tweak/Tweak.xm
           else
             mv *.m Tweak/Tweak.xm
           fi
           
-          # 关键修复3: 确保使用正确的Makefile
-          [ -f .github/templates/Makefile ] && cp .github/templates/Makefile Tweak/Makefile
-          [ -f .github/templates/control ] && cp .github/templates/control Tweak/control
-          [ -d Resources ] && mv Resources Tweak/Resources
+          # 自动生成Makefile（关键修复）
+          cat > Tweak/Makefile <<EOF
+include \$(THEOS)/makefiles/common.mk
+
+TWEAK_NAME = iOS18SiriRipple
+iOS18SiriRipple_FILES = Tweak.xm
+iOS18SiriRipple_CFLAGS = -fobjc-arc
+
+include \$(THEOS_MAKE_PATH)/tweak.mk
+EOF
           
-          echo "项目结构:"
-          tree -L 2
+          # 自动生成control文件（关键修复）
+          cat > Tweak/control <<EOF
+Package: com.yourcompany.ios18siriripple
+Name: iOS18SiriRipple
+Version: 1.0
+Architecture: iphoneos-arm
+Description: iOS 18 Siri Ripple Effect
+Maintainer: Your Name
+Author: Your Name
+Section: Tweaks
+Depends: mobilesubstrate
+EOF
+          
+          # 处理资源文件
+          if [ -d "Resources" ]; then
+            mv Resources Tweak/
+            echo "SUBPROJECTS += Resources" >> Tweak/Makefile
+          fi
       
       - name: Build ARM64 package
-        # 关键修复4: 切换到Tweak目录构建
         working-directory: ./Tweak
         run: |
-          echo "当前目录: $(pwd)"
-          echo "文件列表:"
-          ls -la
-          
           make clean
           make package ARCHS=arm64
       
