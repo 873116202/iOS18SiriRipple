@@ -8,7 +8,7 @@ on:
 jobs:
   build-deb:
     runs-on: macos-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     
     steps:
     # 1. 检出代码
@@ -24,7 +24,7 @@ jobs:
         echo "可用SDK:"
         xcodebuild -showsdks
         echo "项目结构:"
-        find . -name "*.xcodeproj" -print
+        ls -la iOS18SiriRipple
         echo "##[endgroup]"
       
     # 3. 安装必要工具
@@ -32,13 +32,29 @@ jobs:
       run: |
         brew update
         brew install dpkg ldid wget
-        # 安装Theos依赖
-        brew install ldid xz
-      
-    # 4. 修复项目配置
+        
+    # 4. 设置开发环境
+    - name: Setup environment
+      run: |
+        # 设置Xcode路径
+        sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+        
+        # 创建缓存清理脚本
+        cat > clean_cache.sh <<EOF
+        #!/bin/bash
+        rm -rf build_output
+        rm -rf ~/Library/Developer/Xcode/DerivedData/*
+        rm -rf ~/Library/Caches/com.apple.dt.Xcode/*
+        EOF
+        chmod +x clean_cache.sh
+        
+    # 5. 修复项目配置
     - name: Fix project configuration
       run: |
         cd iOS18SiriRipple
+        
+        # 备份原始项目文件
+        cp iOS18SiriRipple.xcodeproj/project.pbxproj project.pbxproj.bak
         
         # 确保Metal文件包含在构建中
         if ! grep -q "Shader.metal" iOS18SiriRipple.xcodeproj/project.pbxproj; then
@@ -61,13 +77,13 @@ jobs:
         
         echo "✅ 项目配置修复完成"
       
-    # 5. 编译项目
+    # 6. 编译项目（使用全新方法）
     - name: Build project
       run: |
-        cd iOS18SiriRipple
+        # 清理缓存
+        ./clean_cache.sh
         
-        # 清理构建缓存
-        rm -rf build ../build_output ~/Library/Developer/Xcode/DerivedData/*
+        cd iOS18SiriRipple
         
         # 编译命令
         xcodebuild clean build \
@@ -86,7 +102,7 @@ jobs:
         # 验证编译产物
         BINARY_PATH="../build_output/Build/Products/Release-iphoneos/iOS18SiriRipple.framework/iOS18SiriRipple"
         if [ ! -f "$BINARY_PATH" ]; then
-          echo "❌ 错误：编译产物不存在"
+          echo "::error::❌ 编译产物不存在"
           echo "构建日志:"
           cat xcodebuild.log
           echo "构建目录内容:"
@@ -95,27 +111,26 @@ jobs:
         else
           echo "✅ 编译成功！产物路径: $BINARY_PATH"
           file "$BINARY_PATH"
-        end
+        fi
         
         # 签名二进制文件
         ldid -S "$BINARY_PATH"
         echo "✅ 二进制文件已签名"
       
-    # 6. 创建DEB包
+    # 7. 创建DEB包
     - name: Create deb package
       run: |
-        # 设置编译产物路径
-        BINARY_PATH="build_output/Build/Products/Release-iphoneos/iOS18SiriRipple.framework/iOS18SiriRipple"
-        
         # 创建DEB包结构
         mkdir -p package/Library/MobileSubstrate/DynamicLibraries
         mkdir -p package/DEBIAN
         
         # 复制编译产物
-        cp "$BINARY_PATH" package/Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.dylib
+        cp build_output/Build/Products/Release-iphoneos/iOS18SiriRipple.framework/iOS18SiriRipple package/Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.dylib
         
         # 创建plist配置文件
         cat > package/Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.plist <<EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
         <plist version="1.0">
         <dict>
             <key>Filter</key>
@@ -146,20 +161,20 @@ jobs:
         cat > package/DEBIAN/postinst <<EOF
         #!/bin/bash
         # 设置文件权限
-        chmod 0755 /Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.dylib
-        chmod 0644 /Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.plist
+        /bin/chmod 0755 /Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.dylib
+        /bin/chmod 0644 /Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.plist
         
         # 重启SpringBoard
-        su -c "killall -9 SpringBoard" mobile
-        echo "✅ SpringBoard已重启，请解锁设备查看效果"
+        /usr/bin/killall -9 SpringBoard
+        exit 0
         EOF
         chmod 0755 package/DEBIAN/postinst
         
         # 打包为DEB文件
-        dpkg-deb -b package iOS18SiriRipple.deb
-        echo "🎉 DEB包创建成功: iOS18SiriRipple.deb"
+        dpkg-deb -Zgzip -b package ../iOS18SiriRipple.deb
+        echo "🎉 DEB包创建成功: $(pwd)/../iOS18SiriRipple.deb"
       
-    # 7. 上传制品
+    # 8. 上传制品
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -168,7 +183,7 @@ jobs:
           iOS18SiriRipple.deb
           xcodebuild.log
       
-    # 8. 错误处理
+    # 9. 错误处理
     - name: Upload error logs
       if: failure()
       uses: actions/upload-artifact@v4
