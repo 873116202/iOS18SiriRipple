@@ -8,6 +8,7 @@ on:
 jobs:
   build-deb:
     runs-on: macos-latest
+    timeout-minutes: 15
     
     steps:
     - name: Checkout code
@@ -41,6 +42,9 @@ jobs:
         # 复制编译产物
         cp build/Release-iphoneos/iOS18SiriRipple.framework/iOS18SiriRipple package/Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.dylib
         
+        # 签名 (可选)
+        ldid -S package/Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.dylib
+        
         # 创建plist文件
         cat > package/Library/MobileSubstrate/DynamicLibraries/iOS18SiriRipple.plist <<EOF
         { Filter = { Bundles = ( "com.apple.springboard" ); }; }
@@ -50,7 +54,7 @@ jobs:
         cat > package/DEBIAN/control <<EOF
         Package: com.behuge.ios18siriripple
         Name: iOS18SiriRipple
-        Version: 0.0.1
+        Version: 1.0.0
         Architecture: iphoneos-arm
         Description: iOS 18 style Siri ripple animation
         Maintainer: 873116202
@@ -71,14 +75,18 @@ jobs:
         # 构建deb包
         dpkg-deb -b package iOS18SiriRipple.deb
         
+    # 修复：使用 v4 而不是弃用的 v3
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: iOS18SiriRipple.deb
         path: iOS18SiriRipple.deb
         
-    - name: Create Release
+    # 添加发布步骤
+    - name: Create GitHub Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
         files: iOS18SiriRipple.deb
+        tag_name: ${{ github.ref }}
+        body: "iOS18SiriRipple deb package"
