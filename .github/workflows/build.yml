@@ -7,36 +7,45 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4  # 更新checkout版本
-        
+        uses: actions/checkout@v4
+
       - name: Setup Theos
         run: |
           export THEOS=/opt/theos
           sudo git clone --depth=1 https://github.com/theos/theos.git $THEOS
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           sudo $THEOS/bin/bootstrap.sh
-          
+
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git clang curl libc++-dev libc++abi-dev
-          sudo ln -s /usr/bin/ld64 /usr/bin/ld
-          
+          sudo apt-get install -y build-essential git clang curl libc++-dev libc++abi-dev lld
+          sudo ln -s /usr/bin/ld64 /usr/bin/ld  # 修复ld链接，确保使用ld64
+
       - name: Prepare build directory
         run: |
-          mkdir -p Tweak
-          mv *.m Tweak/Tweak.xm  # 重命名主文件
+          # 创建必要的目录结构
+          mkdir -p Tweak/Resources
+          # 移动源代码文件到Tweak目录（假设源代码文件在根目录下，扩展名为.m）
+          mv *.m Tweak/
+          # 重命名主文件为Tweak.xm
+          mv Tweak/main.m Tweak/Tweak.xm || mv Tweak/*.m Tweak/Tweak.xm
+          # 复制Makefile和control文件（这些文件应该在.github/templates/目录下）
           cp .github/templates/Makefile Tweak/
           cp .github/templates/control Tweak/
-          
+          # 如果有资源文件，移动到Resources目录
+          mv *.png *.mp4 Tweak/Resources/ 2>/dev/null || true
+
       - name: Build package
+        env:
+          THEOS_MAKE_PATH: /opt/theos/makefiles
         run: |
           cd Tweak
           make clean
           make package ARCHS=arm64
-          
+
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4  # 关键：更新到v4版本
         with:
           name: iOS18SiriRipple_Deb
           path: Tweak/packages/*.deb
