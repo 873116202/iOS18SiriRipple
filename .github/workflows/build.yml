@@ -1,54 +1,9 @@
-name: Build iOS18SiriRipple Deb
-
-on: [push]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Setup Theos environment
-        run: |
-          export THEOS=/opt/theos
-          sudo git clone --depth=1 https://github.com/theos/theos.git $THEOS
-          echo "THEOS=$THEOS" >> $GITHUB_ENV
-          sudo $THEOS/bin/bootstrap.sh
-      
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential git clang curl libc++-dev libc++abi-dev libperl-dev
-          sudo ln -s /usr/bin/ld.lld /usr/bin/ld
-      
-      - name: Prepare build structure
-        run: |
-          # 创建标准Theos项目结构
-          mkdir -p Tweak/Resources
-          
-          # 移动主代码文件
-          mv *.m Tweak/Tweak.xm
-          
-          # 应用编译配置
-          cp .github/templates/Makefile Tweak/
-          cp .github/templates/control Tweak/
-          
-          # 移动资源文件
-          mv *.png Tweak/Resources/ 2>/dev/null || true
-          mv *.mp4 Tweak/Resources/ 2>/dev/null || true
-      
-      - name: Build ARM64 package
-        env:
-          THEOS_MAKE_PATH: /opt/theos/makefiles
-          ARCHS: arm64
-        run: |
-          cd Tweak
-          make clean
-          make package
-        
-      - name: Upload artifact 🔼
-        uses: actions/upload-artifact@v4  # 已更新到 v4 版本
-        with:
-          name: iOS18SiriRipple_Deb_Package
-          path: Tweak/packages/*.deb
+Package: com.yourname.ios18siriripple
+Name: iOS18SiriRipple
+Version: 1.0
+Architecture: iphoneos-arm
+Description: iOS 18 Siri Ripple Animation
+Maintainer: YourName
+Author: YourName
+Depends: mobilesubstrate (>= 0.9.5000)
+Section: Tweaks
