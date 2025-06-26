@@ -1,17 +1,14 @@
-name: build deb
-
-# 修复点：将 on 部分改为列表或带空对象的结构
-on: [push, pull_request]  # ✅ 正确写法
-
+name: Build Deb
+on: [push]
 jobs:
- build:
-   runs-on: macos-latest
-
-   steps:
-     - uses: actions/checkout@v4.2.2
-       with:
-         submodules: true
-
+  build:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Theos
+      run: |
+        git clone --depth 1 https://github.com/theos/theos.git
+        echo "THEOS=$(pwd)/theos" >> $GITHUB_ENV
      - name: Check cache
        run: |
          echo "upstream_heads=$(git ls-remote https://github.com/roothide/theos | head -n1 | cut -f1)-$(git ls-remote https://github.com/theos/sdks | head -n1 | cut -f1)" >> $GITHUB_ENV
@@ -30,12 +27,10 @@ jobs:
        run: |
          echo "$(brew --prefix)/opt/make/libexec/gnubin" >> $GITHUB_PATH
 
-     - name: Build package
-       run: |
-         rm -f packages/*
-         make package FINALPACKAGE=1 -j$(sysctl -n hw.ncpu)
-         make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1 -j$(sysctl -n hw.ncpu)
-         make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1 -j$(sysctl -n hw.ncpu)
+     - name: Build Package
+      run: |
+        make clean
+        make package FINALPACKAGE=1
 
      - name: Upload specific Deb packages
        uses: actions/upload-artifact@v4.6.0
