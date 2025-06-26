@@ -1,11 +1,9 @@
-Package: com.ps666666.18siri
-Name: 18siri
-Version: 2.2-7
-Description: 仅供学习交流，请在 24 小时内自觉删除。
-Homepage: https://github.com/huami1314/DYYY
-Section: Tweaks
-Depends: firmware (>= 5.0), mobilesubstrate
-Priority: optional
-Maintainer: huami
-Author: huami
+Package: com.yourname.ios18siriripple
+Name: iOS18SiriRipple
+Version: 1.0
 Architecture: iphoneos-arm
+Description: iOS 18 Siri Ripple Animation
+Maintainer: YourName
+Author: YourName
+Depends: mobilesubstrate
+Section: Tweaks
