@@ -9,7 +9,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = iOS18SiriRipple
 
-iOS18SiriRipple_FILES = Tweak.xm
+iOS18SiriRipple_FILES = $(wildcard *.m) $(wildcard *.mm)  # 包含所有.m/.mm文件
 iOS18SiriRipple_CFLAGS = -fobjc-arc
 iOS18SiriRipple_FRAMEWORKS = UIKit QuartzCore
 
