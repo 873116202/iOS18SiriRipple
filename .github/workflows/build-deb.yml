@@ -27,7 +27,7 @@ jobs:
         ls -la
         echo "##[endgroup]"
       
-    # 3. 安装必要工具（修复wget警告）
+    # 3. 安装必要工具
     - name: Install build tools
       run: |
         brew update
@@ -37,7 +37,7 @@ jobs:
         else
           echo "wget已安装，跳过安装"
         fi
-        brew install dpkg ldid
+        brew install dpkg ldid zip
       
     # 4. 设置开发环境
     - name: Setup environment
@@ -56,6 +56,9 @@ jobs:
         EOF
         chmod +x clean_cache.sh
         
+        # 确保日志目录存在
+        mkdir -p logs
+      
     # 5. 修复项目配置
     - name: Fix project configuration
       run: |
@@ -85,13 +88,21 @@ jobs:
         
         echo "✅ 项目配置修复完成"
       
-    # 6. 编译项目
+    # 6. 编译项目（确保生成日志）
     - name: Build project
       run: |
         # 清理缓存
         ./clean_cache.sh
         
         cd iOS18SiriRipple
+        
+        # 设置日志文件路径
+        LOG_DIR="${GITHUB_WORKSPACE}/logs"
+        BUILD_LOG="${LOG_DIR}/xcodebuild.log"
+        LS_LOG="${LOG_DIR}/ls_output.log"
+        
+        # 确保日志目录存在
+        mkdir -p "${LOG_DIR}"
         
         # 编译命令（添加详细日志）
         set -x  # 开启详细日志
@@ -106,17 +117,15 @@ jobs:
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGNING_ALLOWED=NO \
           -derivedDataPath ../build_output \
-          | tee ../xcodebuild.log
+          | tee "${BUILD_LOG}"
         set +x  # 关闭详细日志
         
         # 验证编译产物
         BINARY_PATH="../build_output/Build/Products/Release-iphoneos/iOS18SiriRipple.framework/iOS18SiriRipple"
         if [ ! -f "$BINARY_PATH" ]; then
           echo "::error::❌ 编译产物不存在"
-          echo "构建日志:"
-          cat ../xcodebuild.log
-          echo "构建目录内容:"
-          ls -lR ../build_output
+          # 记录目录结构到日志
+          ls -lR ../build_output > "${LS_LOG}"
           exit 1
         else
           echo "✅ 编译成功！产物路径: $BINARY_PATH"
@@ -187,21 +196,41 @@ jobs:
         dpkg-deb -b package iOS18SiriRipple.deb
         echo "🎉 DEB包创建成功: iOS18SiriRipple.deb"
       
-    # 8. 上传制品（修复路径问题）
+    # 8. 上传制品
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: build-artifacts
         path: |
           ${GITHUB_WORKSPACE}/iOS18SiriRipple.deb
-          ${GITHUB_WORKSPACE}/xcodebuild.log
       
-    # 9. 错误处理（修复路径问题）
+    # 9. 确保日志收集（无论成功或失败）
+    - name: Collect and upload logs
+      if: always()  # 无论成功或失败都执行
+      run: |
+        # 确保日志目录存在
+        mkdir -p logs
+        
+        # 收集所有可能相关的日志
+        if [ -f "${GITHUB_WORKSPACE}/xcodebuild.log" ]; then
+          cp "${GITHUB_WORKSPACE}/xcodebuild.log" logs/
+        fi
+        
+        if [ -d "${GITHUB_WORKSPACE}/build_output" ]; then
+          ls -lR "${GITHUB_WORKSPACE}/build_output" > logs/build_directory.txt
+        fi
+        
+        # 创建日志包
+        timestamp=$(date +%Y%m%d%H%M%S)
+        zip -r "error-logs-$timestamp.zip" logs/
+        echo "✅ 日志包已创建: error-logs-$timestamp.zip"
+      
+    # 10. 上传错误日志（确保在任何情况下都能上传）
     - name: Upload error logs
-      if: failure()
+      if: always()  # 无论成功或失败都执行
       uses: actions/upload-artifact@v4
       with:
         name: error-logs
         path: |
-          ${GITHUB_WORKSPACE}/xcodebuild.log
-          ${GITHUB_WORKSPACE}/build_output
+          ${GITHUB_WORKSPACE}/error-logs-*.zip
+        retention-days: 7
